@@ -131,11 +131,31 @@ b32 tensor_shape_equals(Tensor a, Tensor b) {
     return 1;
 }
 
+// TODO: add inplace variants
+Tensor tensor_sub(Tensor a, Tensor b) {
+    assert(tensor_shape_equals(a, b));
+    f32 *data = (f32 *)malloc(sizeof(f32) * a.size);
+    for (u32 i = 0; i < a.size; ++i) {
+        data[i] = a.data[i] - b.data[i];
+    }
+    return make_tensor(a.shape, a.dims, data);
+}
+
 Tensor tensor_add(Tensor a, Tensor b) {
     assert(tensor_shape_equals(a, b));
     f32 *data = (f32 *)malloc(sizeof(f32) * a.size);
     for (u32 i = 0; i < a.size; ++i) {
         data[i] = a.data[i] + b.data[i];
+    }
+    return make_tensor(a.shape, a.dims, data);
+}
+
+// element-wise multiplication
+Tensor tensor_mul(Tensor a, Tensor b) {
+    assert(tensor_shape_equals(a, b));
+    f32 *data = (f32 *)malloc(sizeof(f32) * a.size);
+    for (u32 i = 0; i < a.size; ++i) {
+        data[i] = a.data[i] * b.data[i];
     }
     return make_tensor(a.shape, a.dims, data);
 }
@@ -168,9 +188,28 @@ f32 sigmoid(f32 x) {
     return 1.0f / (1.0f + expf(-x));
 }
 
+f32 sigmoid_prime(f32 x) {
+    return x * (1.0f - x);
+}
+
+Tensor tensor_func(Tensor x, f32 (*func)(f32)) {
+    f32 *data = (f32 *)calloc(sizeof(f32), x.size);
+    for (u32 i = 0; i < x.size; ++i) {
+        data[i] = func(x.data[i]);
+    }
+    return make_tensor(x.shape, x.dims, data);
+}
+
 Tensor tensor_func_inplace(Tensor x, f32 (*func)(f32)) {
     for (u32 i = 0; i < x.size; ++i) {
         x.data[i] = func(x.data[i]);
+    }
+    return x;
+}
+
+Tensor tensor_scale(Tensor x, f32 s) {
+    for (u32 i = 0; i < x.size; ++i) {
+        x.data[i] *= s;
     }
     return x;
 }
@@ -205,6 +244,8 @@ int main(int argc, char **argv) {
     Linear l1 = make_linear(2, 2);
     Linear l2 = make_linear(2, 1);
 
+    f32 lr = 0.01f;
+
     printf("x = ");
     print_tensor(x);
     printf("----- l1\n");
@@ -213,24 +254,38 @@ int main(int argc, char **argv) {
     print_linear(l2);
     printf("-----\n");
 
-    x = tensor_linear(x, l1);
+    Tensor l1_out = tensor_linear(x, l1);
     printf("x * l1 = ");
-    print_tensor(x);
+    print_tensor(l1_out);
 
-    x = tensor_func_inplace(x, sigmoid);
+    l1_out = tensor_func_inplace(l1_out, sigmoid);
     printf("sigmoid = ");
-    print_tensor(x);
+    print_tensor(l1_out);
 
-    x = tensor_linear(x, l2);
+    Tensor l2_out = tensor_linear(l1_out, l2);
     printf("(x * l1) * l2 = ");
-    print_tensor(x);
+    print_tensor(l2_out);
 
-    x = tensor_func_inplace(x, sigmoid);
+    l2_out = tensor_func_inplace(l2_out, sigmoid);
     printf("sigmoid = ");
-    print_tensor(x);
+    print_tensor(l2_out);
 
-    f32 loss = mse_loss(x, y);
+    f32 loss = mse_loss(l2_out, y);
     printf("loss = %f\n", loss);
+
+    Tensor l2_err = tensor_mul(tensor_sub(l2_out, y), tensor_func(l2_out, sigmoid_prime));
+    print_tensor(l2_err);
+    Tensor l1_err = tensor_mul(tensor_dot(l2_err, l2.w), tensor_func(l1_out, sigmoid_prime));
+    print_tensor(l1_err);
+
+    printf("checkpoint\n");
+    Tensor l2_dw = tensor_dot(l1_out, l2_err);
+    Tensor l1_dw = tensor_dot(x, l1_err);
+
+    l1.w = tensor_sub(l1.w, tensor_scale(l1_dw, lr));
+    l2.w = tensor_sub(l2.w, tensor_scale(l2_dw, lr));
+    print_tensor(l1.w);
+    print_tensor(l2.w);
 
     return 0;
 }
