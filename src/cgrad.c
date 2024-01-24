@@ -10,8 +10,17 @@
 typedef float f32;
 typedef int32_t s32;
 typedef uint32_t u32;
+typedef s32 b32;
 
 #define ARRAY_LEN(a) (sizeof(a) / sizeof((a)[0]))
+
+#ifndef max
+#define max(a,b) (((a) > (b)) ? (a) : (b))
+#endif
+
+#ifndef min
+#define min(a,b) (((a) < (b)) ? (a) : (b))
+#endif
 
 #define MAX_DIMS 8
 
@@ -114,16 +123,63 @@ Linear make_linear(u32 in, u32 out) {
     return (Linear){.w = tensor_uniform(w_shape, 2, -bound, bound), .b = tensor_uniform(b_shape, 1, -bound, bound)};
 }
 
-Tensor tensor_add(Tensor a, Tensor b) {
-
+b32 tensor_shape_equals(Tensor a, Tensor b) {
+    if (a.dims != b.dims) return 0;
+    for (u32 i = 0; i < a.dims; ++i) {
+        if (a.shape[i] != b.shape[i]) return 0;
+    }
+    return 1;
 }
 
-Tensor tensor_mul(Tensor a, Tensor b) {
+Tensor tensor_add(Tensor a, Tensor b) {
+    assert(tensor_shape_equals(a, b));
+    f32 *data = (f32 *)malloc(sizeof(f32) * a.size);
+    for (u32 i = 0; i < a.size; ++i) {
+        data[i] = a.data[i] + b.data[i];
+    }
+    return make_tensor(a.shape, a.dims, data);
+}
 
+Tensor tensor_dot(Tensor a, Tensor b) {
+    // Only vec * matrix mul for now
+    assert(a.dims == 1 && b.dims <= 2 && a.shape[0] == b.shape[1]);
+
+    u32 shape[] = {b.shape[0]};
+    f32 *data = (f32 *)calloc(sizeof(f32), shape[0]);
+
+    for (u32 i = 0; i < b.shape[1]; ++i) {
+        for (u32 j = 0; j < a.shape[0]; ++j) {
+            data[i] += a.data[j] * b.data[i * b.shape[1] + j];
+        }
+    }
+
+    return make_tensor(shape, 1, data);
 }
 
 Tensor tensor_linear(Tensor x, Linear l) {
+    return tensor_add(tensor_dot(x, l.w), l.b);
+}
 
+f32 relu(f32 x) {
+    return max(0.0f, x);
+}
+
+f32 sigmoid(f32 x) {
+    return 1.0f / (1.0f + expf(-x));
+}
+
+Tensor tensor_func_inplace(Tensor x, f32 (*func)(f32)) {
+    for (u32 i = 0; i < x.size; ++i) {
+        x.data[i] = func(x.data[i]);
+    }
+    return x;
+}
+
+void print_linear(Linear l) {
+    printf("w = ");
+    print_tensor(l.w);
+    printf("b = ");
+    print_tensor(l.b);
 }
 
 int main(int argc, char **argv) {
@@ -136,22 +192,29 @@ int main(int argc, char **argv) {
     Linear l1 = make_linear(2, 2);
     Linear l2 = make_linear(2, 1);
 
-#if 0
-    u32 shape[] = {2, 2, 3};
-    u32 dims = ARRAY_LEN(shape);
-    Tensor t = tensor_uniform(shape, dims, 0.0f, 1.0f);
-    print_tensor(t);
-    print_tensor_shape(t);
+    printf("x = ");
+    print_tensor(x);
+    printf("----- l1\n");
+    print_linear(l1);
+    printf("----- l2\n");
+    print_linear(l2);
+    printf("-----\n");
 
-    u32 new_shape[] = {4, 3};
-    t = tensor_reshape(t, new_shape, ARRAY_LEN(new_shape));
-    print_tensor(t);
-    print_tensor_shape(t);
+    x = tensor_linear(x, l1);
+    printf("x * l1 = ");
+    print_tensor(x);
 
-    t = tensor_flatten(t);
-    print_tensor(t);
-    print_tensor_shape(t);
-#endif
+    x = tensor_func_inplace(x, sigmoid);
+    printf("sigmoid = ");
+    print_tensor(x);
+
+    x = tensor_linear(x, l2);
+    printf("(x * l1) * l2 = ");
+    print_tensor(x);
+
+    x = tensor_func_inplace(x, sigmoid);
+    printf("sigmoid = ");
+    print_tensor(x);
 
     return 0;
 }
