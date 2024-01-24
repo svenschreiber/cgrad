@@ -175,6 +175,15 @@ Tensor tensor_func_inplace(Tensor x, f32 (*func)(f32)) {
     return x;
 }
 
+f32 mse_loss(Tensor x, Tensor y) {
+    assert(tensor_shape_equals(x, y));
+    f32 loss = 0.0f;
+    for (u32 i = 0; i < x.size; ++i) {
+        loss += (y.data[i] - x.data[i]) * (y.data[i] - x.data[i]);
+    }
+    return loss / x.size;
+}
+
 void print_linear(Linear l) {
     printf("w = ");
     print_tensor(l.w);
@@ -188,6 +197,10 @@ int main(int argc, char **argv) {
     f32 x_data[] = {0.f, 1.f};
     u32 x_shape[] = {2};
     Tensor x = make_tensor(x_shape, ARRAY_LEN(x_shape), x_data);
+
+    f32 y_data[] = {1.f};
+    u32 y_shape[] = {1};
+    Tensor y = make_tensor(y_shape, ARRAY_LEN(y_shape), y_data);
 
     Linear l1 = make_linear(2, 2);
     Linear l2 = make_linear(2, 1);
@@ -215,6 +228,9 @@ int main(int argc, char **argv) {
     x = tensor_func_inplace(x, sigmoid);
     printf("sigmoid = ");
     print_tensor(x);
+
+    f32 loss = mse_loss(x, y);
+    printf("loss = %f\n", loss);
 
     return 0;
 }
