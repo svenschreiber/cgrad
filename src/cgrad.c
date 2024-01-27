@@ -86,6 +86,7 @@ void print_tensor_shape(Tensor t) {
 }
 
 Tensor make_tensor(u32 *shape, u32 dims, f32 *data) {
+    assert(dims <= MAX_DIMS);
     Tensor t = {.dims = dims, .data = data, .size = array_prod(shape, dims)};
     memcpy(t.shape, shape, sizeof(u32) * dims);
     return t;
@@ -109,6 +110,7 @@ f32 random_uniform(f32 low, f32 high) {
 
 Tensor tensor_uniform(u32 *shape, u32 dims, f32 low, f32 high) {
     u32 size = array_prod(shape, dims);
+    printf("size = %u\n", size);
     f32 *data = (f32 *)malloc(sizeof(f32) * size);
     for (u32 i = 0; i < size; ++i) {
         data[i] = random_uniform(low, high);
@@ -123,12 +125,16 @@ Linear make_linear(u32 in, u32 out) {
     return (Linear){.w = tensor_uniform(w_shape, 2, -bound, bound), .b = tensor_uniform(b_shape, 1, -bound, bound)};
 }
 
-b32 tensor_shape_equals(Tensor a, Tensor b) {
-    if (a.dims != b.dims) return 0;
+b32 tensor_shape_equals_array(Tensor a, u32 *shape, u32 dims) {
+    if (a.dims != dims) return 0;
     for (u32 i = 0; i < a.dims; ++i) {
-        if (a.shape[i] != b.shape[i]) return 0;
+        if (a.shape[i] != shape[i]) return 0;
     }
     return 1;
+}
+
+b32 tensor_shape_equals(Tensor a, Tensor b) {
+    return tensor_shape_equals_array(a, b.shape, b.dims);
 }
 
 // TODO: add inplace variants
@@ -164,8 +170,11 @@ Tensor tensor_dot(Tensor a, Tensor b) {
     // Only vec * matrix mul for now
     assert(a.dims == 1 && b.dims <= 2 && a.shape[0] == b.shape[1]);
 
+    print_tensor_shape(a);
+    print_tensor_shape(b);
+
     u32 shape[] = {b.shape[0]};
-    f32 *data = (f32 *)calloc(sizeof(f32), shape[0]);
+    f32 *data = (f32 *)calloc(shape[0], sizeof(f32));
 
     for (u32 i = 0; i < b.shape[1]; ++i) {
         for (u32 j = 0; j < a.shape[0]; ++j) {
@@ -230,8 +239,94 @@ void print_linear(Linear l) {
     print_tensor(l.b);
 }
 
+void print_mem(f32 *data, u32 size) {
+    for (u32 i = 0; i < size; ++i) {
+        printf("%.2f ", data[i]);
+    }
+    printf("\n");
+}
+
+Tensor tensor_expand(Tensor t, u32 *shape, u32 dims) {
+    if (tensor_shape_equals_array(t, shape, dims)) return t;
+    assert(t.dims == dims); // TODO: allow t.dims < dims?
+    assert(dims > 0);
+
+    // check if trailing shape matches
+    u32 last_pad = 0;
+    for (u32 i = 0; i < dims; ++i) {
+        if (t.shape[i] == 1) {
+            if (i - last_pad <= 1) last_pad = i;
+            continue;
+        }
+        assert(t.shape[i] == shape[i]);
+    }
+
+    u32 size = array_prod(shape, dims);
+    printf("size: %u\n", size);
+    f32 *data = malloc(sizeof(f32) * size);
+    printf("data: %p\n", data);
+    u32 current_size = t.size;
+    memcpy(data, t.data, current_size * sizeof(f32));
+    for (s32 dim = last_pad; dim >= 0; --dim) {
+        for (u32 i = 1; i < shape[dim]; ++i) {
+            printf("dim: %d, i: %u\n", dim, i);
+            printf("to: %ld\n", (data + (i * current_size)) - data);
+            memcpy(data + i * current_size, data, current_size * sizeof(f32));
+        }
+        current_size *= shape[dim];
+    }
+
+    return make_tensor(shape, dims, data);
+}
+
+// TODO: maybe change api and return a pair of (new) tensors?
+// Just to make it consistent with the other functions, that
+// all return the new tensor.
+void tensor_broadcast(Tensor *x, Tensor *y) {
+    if (x->dims != y->dims) {
+        Tensor *small = x->dims < y->dims ? x : y;
+        Tensor *big   = x->dims < y->dims ? y : x;
+        u32 shape[big->dims];
+        u32 pad = big->dims - small->dims;
+        for (u32 i = 0; i < big->dims; ++i) {
+            if (i < pad) shape[i] = 1;
+            else shape[i] = small->shape[i - pad];
+        }
+        *small = tensor_reshape(*small, shape, big->dims);
+    }
+
+    assert(x->dims == y->dims);
+
+    u32 dims = x->dims;
+    u32 shape[dims];
+    for (u32 i = 0; i < dims; ++i) {
+        shape[i] = max(x->shape[i], y->shape[i]);
+    }
+    *x = tensor_expand(*x, shape, dims);
+    printf("sos\n");
+    *y = tensor_expand(*y, shape, dims);
+}
+
+void test_broadcast() {
+    u32 x_shape[] = {2, 2, 4};
+    Tensor x = tensor_uniform(x_shape, ARRAY_LEN(x_shape), 0.0f, 1.0f);
+    printf("x = ");
+    print_tensor(x);
+
+    u32 y_shape[] = {2, 4};
+    Tensor y = tensor_uniform(y_shape, ARRAY_LEN(y_shape), 0.0f, 1.0f);
+    printf("y = ");
+    print_tensor(y);
+
+    tensor_broadcast(&x, &y);
+    print_tensor(x);
+    print_tensor(y);
+}
+
 int main(int argc, char **argv) {
     //srand(time(0));
+
+    test_broadcast();
 
     f32 x_data[] = {0.f, 1.f};
     u32 x_shape[] = {2};
@@ -273,6 +368,7 @@ int main(int argc, char **argv) {
     f32 loss = mse_loss(l2_out, y);
     printf("loss = %f\n", loss);
 
+    exit(0);
     Tensor l2_err = tensor_mul(tensor_sub(l2_out, y), tensor_func(l2_out, sigmoid_prime));
     print_tensor(l2_err);
     Tensor l1_err = tensor_mul(tensor_dot(l2_err, l2.w), tensor_func(l1_out, sigmoid_prime));
